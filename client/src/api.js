@@ -60,4 +60,5 @@ export const api = {
   adminUsers: () => request('/admin/users'),
   adminOrders: () => request('/admin/orders'),
   adminLogs: () => request('/admin/logs'),
+  captcha: () => request('/auth/captcha'),
 };

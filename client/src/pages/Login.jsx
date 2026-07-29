@@ -10,14 +10,21 @@ export default function Login() {
   const [error, setError] = useState(null);
   const { refresh } = useAuth();
   const navigate = useNavigate();
+  const [challenge, setChallenge] = useState(null);
+  const [answer, setAnswer] = useState('');
 
   const submitPassword = async (e) => {
     e.preventDefault();
     setError(null);
     try {
-      const res = await api.login(form);
+      const payload = { ...form };
+      if (challenge) {
+        payload.captchaToken = challenge.token;
+        payload.captchaAnswer = answer;
+      }
+
+      const res = await api.login(payload);
       if (res.mfaRequired) {
-        // No session yet - the server issued only a scoped interim token.
         setStep('mfa');
         return;
       }
@@ -25,6 +32,14 @@ export default function Login() {
       navigate('/');
     } catch (err) {
       setError(err.message);
+      setAnswer('');
+      // The server signals when a challenge becomes necessary.
+      try {
+        const c = await api.captcha();
+        setChallenge(c.required ? c : null);
+      } catch {
+        setChallenge(null);
+      }
     }
   };
 
@@ -55,6 +70,14 @@ export default function Login() {
           <label htmlFor="password">Password</label>
           <input id="password" type="password" value={form.password}
                  onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+
+          {challenge && (
+            <>
+              <label htmlFor="captcha">{challenge.question}</label>
+              <input id="captcha" inputMode="numeric" value={answer}
+                     onChange={(e) => setAnswer(e.target.value)} required />
+            </>
+          )}       
 
           <button type="submit">Continue</button>
         </form>
