@@ -40,4 +40,27 @@ async function query(text, params) {
   return result;
 }
 
-module.exports = { pool, query };
+/**
+ * Runs several queries as a single all-or-nothing unit.
+ *
+ * If anything inside `fn` throws, every change is undone (ROLLBACK).
+ * This prevents half-finished states - e.g. a user row created but
+ * their password history missing.
+ */
+async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    // Always return the connection to the pool, success or failure.
+    client.release();
+  }
+}
+
+module.exports = { pool, query, withTransaction };
