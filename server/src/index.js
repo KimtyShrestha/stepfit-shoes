@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { query } = require('./db');
+const authRoutes = require('./routes/auth');
 
 const app = express();
 
@@ -27,6 +28,8 @@ app.use(
 );
 
 // Health check - confirms the server is up AND the database is reachable.
+
+app.use('/api/auth', authRoutes);
 app.get('/api/health', async (req, res) => {
   try {
     const result = await query('SELECT NOW() AS server_time');
