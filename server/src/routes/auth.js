@@ -1,6 +1,13 @@
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { validatePassword, hashPassword, verifyPassword } = require('../utils/password');
+const {
+  validatePassword,
+  hashPassword,
+  verifyPassword,
+  isPasswordReused,
+  HISTORY_DEPTH,
+} = require('../utils/password');
+
 const {
   signToken,
   setSessionCookie,
@@ -310,6 +317,104 @@ router.get('/captcha', (req, res) => {
     required,
     ...(required ? captcha.issueChallenge() : {}),
   });
+});
+
+/**
+ * POST /api/auth/change-password
+ */
+router.post('/change-password', requireAuth, async (req, res) => {
+  try {
+    const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current and new passwords are required.' });
+    }
+
+    const current = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    const storedHash = current.rows[0]?.password_hash;
+
+    // Re-authenticate before a security-sensitive change. Possession of
+    // a valid session is not sufficient - a hijacked session must not be
+    // able to lock the legitimate owner out of their own account.
+    if (!storedHash || !(await verifyPassword(currentPassword, storedHash))) {
+      await query(
+        `INSERT INTO activity_logs (user_id, action, status, ip_address)
+         VALUES ($1, 'PASSWORD_CHANGE', 'failure', $2)`,
+        [req.user.id, req.ip]
+      );
+      return res.status(401).json({ error: 'Current password is incorrect.' });
+    }
+
+    const policy = validatePassword(newPassword, {
+      email: req.user.email,
+      fullName: req.user.full_name,
+    });
+    if (!policy.valid) {
+      return res.status(400).json({
+        error: 'New password does not meet the security policy',
+        details: policy.errors,
+      });
+    }
+
+    const history = await query(
+      `SELECT password_hash FROM password_history
+       WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [req.user.id, HISTORY_DEPTH]
+    );
+
+    if (await isPasswordReused(newPassword, history.rows.map((r) => r.password_hash))) {
+      return res.status(400).json({
+        error: `You cannot reuse any of your last ${HISTORY_DEPTH} passwords.`,
+      });
+    }
+
+    await withTransaction(async (client) => {
+      const newHash = await hashPassword(newPassword);
+
+      // token_version increments, invalidating every existing session
+      // including any an attacker may hold.
+      await client.query(
+        `UPDATE users
+         SET password_hash = $2,
+             password_changed_at = NOW(),
+             token_version = token_version + 1
+         WHERE id = $1`,
+        [req.user.id, newHash]
+      );
+
+      await client.query(
+        'INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)',
+        [req.user.id, newHash]
+      );
+
+      // Prune beyond the retention depth. Keeping hashes indefinitely
+      // is unnecessary data retention.
+      await client.query(
+        `DELETE FROM password_history
+         WHERE user_id = $1 AND id NOT IN (
+           SELECT id FROM password_history
+           WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
+         )`,
+        [req.user.id, HISTORY_DEPTH]
+      );
+
+      await client.query(
+        `INSERT INTO activity_logs (user_id, action, status, ip_address)
+         VALUES ($1, 'PASSWORD_CHANGE', 'success', $2)`,
+        [req.user.id, req.ip]
+      );
+    });
+
+    clearSessionCookie(res);
+
+    return res.json({
+      message: 'Password changed. All sessions have been signed out — please sign in again.',
+    });
+  } catch (err) {
+    console.error('[auth:changePassword]', err.message);
+    return res.status(500).json({ error: 'Could not change password.' });
+  }
 });
 
 module.exports = router;

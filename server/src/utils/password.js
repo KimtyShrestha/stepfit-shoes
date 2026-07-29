@@ -133,6 +133,20 @@ async function verifyPassword(plain, hash) {
   return bcrypt.compare(plain, hash);
 }
 
+/**
+ * Checks a candidate password against a user's recent hashes.
+ *
+ * Each stored hash carries its own salt, so there is no way to compare
+ * without running bcrypt against every entry individually. HISTORY_DEPTH
+ * is kept small to bound this cost.
+ */
+async function isPasswordReused(plain, previousHashes) {
+  for (const hash of previousHashes) {
+    if (await bcrypt.compare(plain, hash)) return true;
+  }
+  return false;
+}
+
 module.exports = {
   validatePassword,
   scorePassword,
@@ -142,4 +156,5 @@ module.exports = {
   MAX_LENGTH,
   BCRYPT_ROUNDS,
   HISTORY_DEPTH,
+  isPasswordReused,
 };
