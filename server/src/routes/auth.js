@@ -1,7 +1,14 @@
 const express = require('express');
 const { query, withTransaction } = require('../db');
 const { validatePassword, hashPassword, verifyPassword } = require('../utils/password');
-const { signToken, setSessionCookie, clearSessionCookie } = require('../utils/jwt');
+const {
+  signToken,
+  setSessionCookie,
+  clearSessionCookie,
+  signMfaPendingToken,
+  setMfaPendingCookie,
+} = require('../utils/jwt');
+
 const { requireAuth } = require('../middleware/auth');
 const { loginLimiter, registerLimiter } = require('../middleware/rateLimit');
 
@@ -206,10 +213,24 @@ router.post('/login', loginLimiter, async (req, res) => {
       [user.id]
     );
 
+  // --- Second factor required? ---------------------------------
+    if (user.mfa_enabled) {
+      // Password is correct, but this token cannot access anything.
+      // It only permits a call to /api/auth/mfa/challenge.
+      setMfaPendingCookie(res, signMfaPendingToken(user));
+      await log(user.id, 'success', 'password_ok_mfa_required');
+
+      return res.json({
+        message: 'Password accepted. Enter your authenticator code to continue.',
+        mfaRequired: true,
+      });
+    }
+
     const token = signToken(user);
     setSessionCookie(res, token);
 
     await log(user.id, 'success', 'password_ok');
+    
 
     return res.json({
       message: 'Signed in successfully.',
