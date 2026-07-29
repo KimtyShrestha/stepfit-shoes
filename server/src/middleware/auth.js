@@ -47,5 +47,29 @@ async function requireAuth(req, res, next) {
   req.user = user;
   next();
 }
+/**
+ * Restricts a route to the listed roles.
+ * Must run after requireAuth, which populates req.user from the
+ * database rather than from token claims - so a demoted user loses
+ * access immediately rather than when their token expires.
+ */
+function requireRole(...allowedRoles) {
+  return async (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
 
-module.exports = { requireAuth };
+    if (!allowedRoles.includes(req.user.role)) {
+      await query(
+        `INSERT INTO activity_logs (user_id, action, status, ip_address, metadata)
+         VALUES ($1, 'AUTHORISATION_DENIED', 'failure', $2, $3)`,
+        [req.user.id, req.ip, JSON.stringify({ path: req.originalUrl, role: req.user.role })]
+      );
+      return res.status(403).json({ error: 'Insufficient privileges.' });
+    }
+
+    next();
+  };
+}
+
+module.exports = { requireAuth, requireRole };
