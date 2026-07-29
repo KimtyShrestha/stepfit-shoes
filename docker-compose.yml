@@ -17,5 +17,34 @@ services:
       timeout: 5s
       retries: 10
 
+  api:
+    build: ./server
+    container_name: stepfit-api
+    restart: unless-stopped
+    environment:
+      # Host is the service name 'db', not localhost: inside the compose
+      # network each service resolves by name.
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      PORT: 4000
+      NODE_ENV: production
+      CLIENT_ORIGIN: http://localhost:8080
+      JWT_SECRET: ${JWT_SECRET}
+      COOKIE_SECRET: ${COOKIE_SECRET}
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY}
+    ports:
+      - "4000:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./client
+    container_name: stepfit-web
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
 volumes:
   stepfit_db_data:
