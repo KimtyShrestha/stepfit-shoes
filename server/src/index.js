@@ -10,6 +10,8 @@ const helmet = require('helmet');
 const { globalLimiter } = require('./middleware/rateLimit');
 const app = express();
 const mfaRoutes = require('./routes/mfa');
+const productRoutes = require('./routes/products');
+const cartRoutes = require('./routes/cart');
 
 // Needed so req.ip shows the real client address when running behind
 // Docker or a proxy. Rate limiting and audit logs both depend on this.
@@ -54,6 +56,8 @@ app.use(
 
 app.use('/api/auth', authRoutes);
 app.use('/api/auth/mfa', mfaRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/cart', cartRoutes);
 app.get('/api/health', async (req, res) => {
   try {
     const result = await query('SELECT NOW() AS server_time');
