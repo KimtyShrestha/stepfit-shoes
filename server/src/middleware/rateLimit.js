@@ -1,4 +1,4 @@
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
 /**
  * Shared response for any limit breach.
@@ -23,11 +23,13 @@ const loginLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   keyGenerator: (req) => {
-    const email = typeof req.body?.email === 'string'
-      ? req.body.email.trim().toLowerCase()
-      : 'anonymous';
-    return `${req.ip}|${email}`;
-  },
+      const email = typeof req.body?.email === 'string'
+        ? req.body.email.trim().toLowerCase()
+        : 'anonymous';
+      // ipKeyGenerator collapses IPv6 addresses to their /64 subnet so a
+      // single user cannot rotate through their allocation to evade limits.
+      return `${ipKeyGenerator(req.ip)}|${email}`;
+    },
   handler: limitReached,
 });
 
@@ -55,5 +57,19 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
   handler: limitReached,
 });
+/**
+ * Limits second-factor attempts.
+ *
+ * A TOTP code is only six digits - a million possibilities, and the
+ * verification window accepts a handful at a time. Without throttling,
+ * brute-forcing the second factor is entirely feasible.
+ */
+const mfaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: limitReached,
+});
 
-module.exports = { loginLimiter, registerLimiter, globalLimiter };
+module.exports = { loginLimiter, registerLimiter, globalLimiter, mfaLimiter };
