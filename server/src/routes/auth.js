@@ -11,6 +11,7 @@ const {
 
 const { requireAuth } = require('../middleware/auth');
 const { loginLimiter, registerLimiter } = require('../middleware/rateLimit');
+const captcha = require('../utils/captcha');
 
 const router = express.Router();
 
@@ -154,6 +155,18 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
 
+    // Progressive challenge: only imposed once this source address has
+    // failed repeatedly, so ordinary users never see it.
+    if (captcha.isRequired(ip)) {
+      const ok = captcha.verifyChallenge(body.captchaToken, body.captchaAnswer);
+      if (!ok) {
+        return res.status(400).json({
+          error: 'Please complete the verification challenge.',
+          captchaRequired: true,
+        });
+      }
+    }
+
     const result = await query(
       `SELECT id, email, full_name, password_hash, role, token_version,
               mfa_enabled, failed_login_attempts, lock_until
@@ -168,6 +181,7 @@ router.post('/login', loginLimiter, async (req, res) => {
       // real account with a wrong password.
       await verifyPassword(password, DUMMY_HASH);
       await log(null, 'failure', 'unknown_account');
+      captcha.recordFailure(ip);
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
@@ -175,6 +189,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     if (user.lock_until && new Date(user.lock_until) > new Date()) {
       const secondsLeft = Math.ceil((new Date(user.lock_until) - new Date()) / 1000);
       await log(user.id, 'failure', 'account_locked');
+      captcha.recordFailure(ip);
       return res.status(423).json({
         error: 'Account temporarily locked due to repeated failed sign-in attempts.',
         retryAfterSeconds: secondsLeft,
@@ -202,6 +217,7 @@ router.post('/login', loginLimiter, async (req, res) => {
       );
 
       await log(user.id, 'failure', 'bad_password');
+      captcha.recordFailure(ip);
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
@@ -212,6 +228,8 @@ router.post('/login', loginLimiter, async (req, res) => {
        WHERE id = $1`,
       [user.id]
     );
+
+    captcha.clearFailures(ip);
 
   // --- Second factor required? ---------------------------------
     if (user.mfa_enabled) {
@@ -279,6 +297,18 @@ router.get('/me', requireAuth, (req, res) => {
       role: req.user.role,
       mfaEnabled: req.user.mfa_enabled,
     },
+  });
+});
+
+/**
+ * GET /api/auth/captcha
+ * Issues a challenge. Also reports whether one is currently required.
+ */
+router.get('/captcha', (req, res) => {
+  const required = captcha.isRequired(req.ip);
+  return res.json({
+    required,
+    ...(required ? captcha.issueChallenge() : {}),
   });
 });
 
