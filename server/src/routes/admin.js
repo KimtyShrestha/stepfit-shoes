@@ -1,10 +1,12 @@
 const express = require('express');
 const { query } = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.use(requireAuth);
+// Applied at router level so every present and future admin route is
+// covered by default. Per-route guards invite omission.
+router.use(requireAuth, requireRole('admin'));
 
 /**
  * GET /api/admin/users
