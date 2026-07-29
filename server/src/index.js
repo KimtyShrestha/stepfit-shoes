@@ -12,6 +12,8 @@ const app = express();
 const mfaRoutes = require('./routes/mfa');
 const productRoutes = require('./routes/products');
 const cartRoutes = require('./routes/cart');
+const orderRoutes = require('./routes/orders');
+const adminRoutes = require('./routes/admin');
 
 // Needed so req.ip shows the real client address when running behind
 // Docker or a proxy. Rate limiting and audit logs both depend on this.
@@ -58,6 +60,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/auth/mfa', mfaRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/cart', cartRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/admin', adminRoutes);
 app.get('/api/health', async (req, res) => {
   try {
     const result = await query('SELECT NOW() AS server_time');
