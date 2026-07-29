@@ -33,15 +33,10 @@ function getKey() {
 function encrypt(plaintext) {
   const key = getKey();
 
-  // A fresh random IV per encryption. Reusing an IV with GCM is
-  // catastrophic - it allows recovery of the plaintext.
-  const iv = crypto.randomBytes(IV_LENGTH);
-
-  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-  const encrypted = Buffer.concat([
-    cipher.update(plaintext, 'utf8'),
-    cipher.final(),
-  ]);
+ // authTagLength is pinned so Node itself rejects a truncated tag.
+  // GCM otherwise accepts 4-16 byte tags, and a shortened tag reduces
+  // forgery difficulty by orders of magnitude.
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv, { authTagLength: TAG_LENGTH });
 
   const authTag = cipher.getAuthTag();
 
@@ -72,7 +67,7 @@ function decrypt(payload) {
     throw new Error('Malformed ciphertext.');
   }
 
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_LENGTH });
 
   // This is what makes GCM "authenticated" encryption: if a single
   // bit of the ciphertext was altered, final() throws instead of
