@@ -25,11 +25,11 @@ const router = express.Router();
 // --- Account lockout policy ---
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 
-// A valid bcrypt hash of a random string. Used to burn the same amount
-// of CPU time when the email does not exist, so response timing cannot
-// reveal which accounts are real.
-const DUMMY_HASH = '$2b$12$abcdefghijklmnopqrstuuNQtE9jZ5rUZQ1DGKQXQ4hVJq3hZ8Aq';
+
+const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
 
 // Deliberately permissive. Strict RFC-5322 validation rejects valid
 // addresses and provides no security benefit - the real check is
