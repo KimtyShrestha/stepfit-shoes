@@ -31,9 +31,9 @@ const bcrypt = require('bcryptjs');
 
 const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
 
-// Deliberately permissive. Strict RFC-5322 validation rejects valid
-// addresses and provides no security benefit - the real check is
-// whether a confirmation email arrives.
+
+
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 /**
