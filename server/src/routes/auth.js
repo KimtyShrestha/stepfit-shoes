@@ -1,8 +1,19 @@
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { validatePassword, hashPassword } = require('../utils/password');
+const { validatePassword, hashPassword, verifyPassword } = require('../utils/password');
+const { signToken, setSessionCookie, clearSessionCookie } = require('../utils/jwt');
+const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
+
+// --- Account lockout policy ---
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
+
+// A valid bcrypt hash of a random string. Used to burn the same amount
+// of CPU time when the email does not exist, so response timing cannot
+// reveal which accounts are real.
+const DUMMY_HASH = '$2b$12$abcdefghijklmnopqrstuuNQtE9jZ5rUZQ1DGKQXQ4hVJq3hZ8Aq';
 
 // Deliberately permissive. Strict RFC-5322 validation rejects valid
 // addresses and provides no security benefit - the real check is
@@ -109,6 +120,144 @@ router.post('/register', async (req, res) => {
     console.error('[auth:register]', err.message);
     return res.status(500).json({ error: 'Registration failed. Please try again.' });
   }
+});
+
+/**
+ * POST /api/auth/login
+ */
+router.post('/login', async (req, res) => {
+  const body = req.body || {};
+  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  const password = typeof body.password === 'string' ? body.password : '';
+
+  const ip = req.ip;
+  const userAgent = (req.get('user-agent') || '').slice(0, 500);
+
+  // Records an attempt without leaking credentials into the log.
+  const log = async (userId, status, reason) =>
+    query(
+      `INSERT INTO activity_logs (user_id, action, status, ip_address, user_agent, metadata)
+       VALUES ($1, 'LOGIN_ATTEMPT', $2, $3, $4, $5)`,
+      [userId, status, ip, userAgent, JSON.stringify({ reason, email })]
+    );
+
+  try {
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+
+    const result = await query(
+      `SELECT id, email, full_name, password_hash, role, token_version,
+              mfa_enabled, failed_login_attempts, lock_until
+       FROM users WHERE email = $1`,
+      [email]
+    );
+    const user = result.rows[0];
+
+    // --- Unknown account -----------------------------------------
+    if (!user) {
+      // Still run bcrypt so the response takes the same time as a
+      // real account with a wrong password.
+      await verifyPassword(password, DUMMY_HASH);
+      await log(null, 'failure', 'unknown_account');
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    // --- Locked out ----------------------------------------------
+    if (user.lock_until && new Date(user.lock_until) > new Date()) {
+      const secondsLeft = Math.ceil((new Date(user.lock_until) - new Date()) / 1000);
+      await log(user.id, 'failure', 'account_locked');
+      return res.status(423).json({
+        error: 'Account temporarily locked due to repeated failed sign-in attempts.',
+        retryAfterSeconds: secondsLeft,
+      });
+    }
+
+    // --- Wrong password ------------------------------------------
+    const passwordOk = await verifyPassword(password, user.password_hash);
+
+    if (!passwordOk) {
+      // A single atomic statement: increment, and lock if the
+      // threshold is reached. Doing this in one UPDATE avoids the
+      // read-then-write race where parallel requests overwrite
+      // each other's counter.
+      await query(
+        `UPDATE users
+         SET failed_login_attempts = failed_login_attempts + 1,
+             lock_until = CASE
+               WHEN failed_login_attempts + 1 >= $2
+               THEN NOW() + ($3 || ' minutes')::interval
+               ELSE lock_until
+             END
+         WHERE id = $1`,
+        [user.id, MAX_FAILED_ATTEMPTS, String(LOCKOUT_MINUTES)]
+      );
+
+      await log(user.id, 'failure', 'bad_password');
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    // --- Success: reset counters ---------------------------------
+    await query(
+      `UPDATE users
+       SET failed_login_attempts = 0, lock_until = NULL
+       WHERE id = $1`,
+      [user.id]
+    );
+
+    const token = signToken(user);
+    setSessionCookie(res, token);
+
+    await log(user.id, 'success', 'password_ok');
+
+    return res.json({
+      message: 'Signed in successfully.',
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        role: user.role,
+        mfaEnabled: user.mfa_enabled,
+      },
+    });
+  } catch (err) {
+    console.error('[auth:login]', err.message);
+    return res.status(500).json({ error: 'Sign-in failed. Please try again.' });
+  }
+});
+
+/**
+ * POST /api/auth/logout
+ */
+router.post('/logout', requireAuth, async (req, res) => {
+  try {
+    clearSessionCookie(res);
+    await query(
+      `INSERT INTO activity_logs (user_id, action, status, ip_address, user_agent)
+       VALUES ($1, 'LOGOUT', 'success', $2, $3)`,
+      [req.user.id, req.ip, (req.get('user-agent') || '').slice(0, 500)]
+    );
+    return res.json({ message: 'Signed out successfully.' });
+  } catch (err) {
+    console.error('[auth:logout]', err.message);
+    return res.status(500).json({ error: 'Sign-out failed.' });
+  }
+});
+
+/**
+ * GET /api/auth/me
+ * Returns the current session's user. Used by the frontend on load.
+ */
+router.get('/me', requireAuth, (req, res) => {
+  return res.json({
+    user: {
+      id: req.user.id,
+      email: req.user.email,
+      fullName: req.user.full_name,
+      role: req.user.role,
+      mfaEnabled: req.user.mfa_enabled,
+    },
+  });
 });
 
 module.exports = router;
