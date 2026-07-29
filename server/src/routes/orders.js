@@ -61,7 +61,12 @@ router.post('/checkout', async (req, res) => {
         }
       }
 
-      const totalCents = Number(req.body?.totalCents ?? 0);
+     // Derived from the authoritative cart rows already locked in this
+      // transaction. Any client-supplied total is ignored entirely.
+      const totalCents = cart.rows.reduce(
+        (sum, item) => sum + item.price_cents * item.quantity,
+        0
+      );
 
       const payment = authorisePayment(totalCents);
       if (!payment.approved) {
@@ -162,8 +167,8 @@ router.get('/:id', async (req, res) => {
 
     const orderResult = await query(
       `SELECT id, user_id, total_cents, status, shipping_address, payment_ref, created_at
-       FROM orders WHERE id = $1`,
-      [id]
+       FROM orders WHERE id = $1 AND user_id = $2`,
+      [id, req.user.id]
     );
 
     if (orderResult.rows.length === 0) {
