@@ -1,0 +1,82 @@
+name: Security CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Fails the build on high or critical advisories in production
+      # dependencies. Supply chain compromise is a leading cause of
+      # breaches in JavaScript projects.
+      - name: Audit backend dependencies
+        working-directory: ./server
+        run: npm ci && npm audit --audit-level=high
+
+      - name: Audit frontend dependencies
+        working-directory: ./client
+        run: npm ci && npm audit --audit-level=high
+
+  secret-scan:
+    name: Committed secret detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the scan covers every past commit, not
+          # just the current tree. A secret removed in a later commit
+          # is still exposed in the history.
+          fetch-depth: 0
+
+      - name: Scan repository history for secrets
+        run: |
+          docker run --rm -v "$PWD:/repo" \
+            zricethezav/gitleaks:latest detect \
+            --source=/repo --no-banner --redact --verbose
+
+  static-analysis:
+    name: Static application security testing
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      # Rulesets detect injection, hardcoded credentials, weak crypto
+      # and insecure cookie configuration at the source level.
+      - name: Run Semgrep security rulesets
+        run: |
+          semgrep scan \
+            --config=p/javascript \
+            --config=p/security-audit \
+            --config=p/secrets \
+            --error \
+            --metrics=off
+
+  container-scan:
+    name: Container image vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -t stepfit-api:ci ./server
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: stepfit-api:ci
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
