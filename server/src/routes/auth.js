@@ -3,6 +3,7 @@ const { query, withTransaction } = require('../db');
 const { validatePassword, hashPassword, verifyPassword } = require('../utils/password');
 const { signToken, setSessionCookie, clearSessionCookie } = require('../utils/jwt');
 const { requireAuth } = require('../middleware/auth');
+const { loginLimiter, registerLimiter } = require('../middleware/rateLimit');
 
 const router = express.Router();
 
@@ -24,7 +25,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
  * POST /api/auth/register
  * Creates a new customer account.
  */
-router.post('/register', async (req, res) => {
+router.post('/register', registerLimiter, async (req, res) => {
   try {
     const body = req.body || {};
 
@@ -125,7 +126,7 @@ router.post('/register', async (req, res) => {
 /**
  * POST /api/auth/login
  */
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const body = req.body || {};
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   const password = typeof body.password === 'string' ? body.password : '';

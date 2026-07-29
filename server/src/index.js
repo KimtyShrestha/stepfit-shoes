@@ -6,12 +6,34 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { query } = require('./db');
 const authRoutes = require('./routes/auth');
-
+const helmet = require('helmet');
+const { globalLimiter } = require('./middleware/rateLimit');
 const app = express();
 
 // Needed so req.ip shows the real client address when running behind
 // Docker or a proxy. Rate limiting and audit logs both depend on this.
 app.set('trust proxy', 1);
+// Security response headers. Must come before any route.
+app.use(
+  helmet({
+    // This API returns only JSON, never HTML, so a restrictive policy
+    // costs nothing. It limits the damage if a response is ever
+    // rendered in a browser context.
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    // Allows the React dev server on a different port to read responses.
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    // Force HTTPS for a year once deployed.
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    referrerPolicy: { policy: 'no-referrer' },
+  })
+);
+
+app.use(globalLimiter);
 
 // Cap incoming request size. Without a limit, one huge POST request
 // can exhaust server memory - a trivial denial-of-service.
