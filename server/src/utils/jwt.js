@@ -17,6 +17,7 @@ function signToken(user) {
     sub: user.id,
     role: user.role,
     tokenVersion: user.token_version,
+    scope: 'session',
   };
 
   return jwt.sign(payload, process.env.JWT_SECRET, {
@@ -39,6 +40,47 @@ function verifyToken(token) {
     algorithms: ['HS256'],
     issuer: 'stepfit-api',
     audience: 'stepfit-client',
+  });
+}
+const MFA_PENDING_TTL = '5m';
+const MFA_COOKIE_NAME = 'stepfit_mfa';
+
+/**
+ * A deliberately limited token issued after a correct password but
+ * BEFORE the second factor is provided.
+ *
+ * Its scope is 'mfa_pending', which requireAuth rejects. It can be
+ * exchanged for a real session only by the MFA challenge endpoint.
+ */
+function signMfaPendingToken(user) {
+  return jwt.sign(
+    { sub: user.id, scope: 'mfa_pending' },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: MFA_PENDING_TTL,
+      algorithm: 'HS256',
+      issuer: 'stepfit-api',
+      audience: 'stepfit-client',
+    }
+  );
+}
+
+function setMfaPendingCookie(res, token) {
+  res.cookie(MFA_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 5 * 60 * 1000,
+  });
+}
+
+function clearMfaPendingCookie(res) {
+  res.clearCookie(MFA_COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
   });
 }
 
@@ -75,6 +117,10 @@ module.exports = {
   verifyToken,
   setSessionCookie,
   clearSessionCookie,
+  signMfaPendingToken,
+  setMfaPendingCookie,
+  clearMfaPendingCookie,
   COOKIE_NAME,
+  MFA_COOKIE_NAME,
   TOKEN_TTL,
 };

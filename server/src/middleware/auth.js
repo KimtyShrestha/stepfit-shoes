@@ -19,6 +19,11 @@ async function requireAuth(req, res, next) {
     // Expired, tampered, or forged - all get the same generic reply.
     return res.status(401).json({ error: 'Session invalid or expired.' });
   }
+  // A pending-MFA token is NOT a session. Reject it here so the
+  // second factor cannot be bypassed by reusing the interim token.
+  if (claims.scope !== 'session') {
+    return res.status(401).json({ error: 'Session invalid or expired.' });
+  }
 
   // The token proves what was true at sign-in. We re-read the user
   // every request so that role changes and revocations take effect
