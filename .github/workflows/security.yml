@@ -12,16 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       # Critical advisories block delivery. High-severity findings are
       # reported for manual triage but do not gate the build, because
-      # reachability analysis is required before a fix can be justified:
-      # an advisory in an unreachable code path carries no real risk,
-      # while a pipeline that fails on every advisory gets ignored.
+      # reachability analysis is required before a fix can be justified.
       - name: Audit backend (blocking on critical)
         working-directory: ./server
         run: npm ci && npm audit --audit-level=critical
@@ -32,11 +29,9 @@ jobs:
         run: npm audit --audit-level=high
 
       # GHSA-qwww-vcr4-c8h2 (react-router, CWE-352, High) is knowingly
-      # accepted. The advisory affects only the unstable React Server
-      # Components request handlers; this client is a Vite SPA using
-      # BrowserRouter with no server-side action handlers, so the
-      # vulnerable path is unreachable. The available fix is a major
-      # version upgrade, tracked separately.
+      # accepted: the advisory affects only the unstable React Server
+      # Components handlers, and this client is a Vite SPA using
+      # BrowserRouter with no server-side action handlers.
       - name: Audit frontend (blocking on critical)
         working-directory: ./client
         run: npm ci && npm audit --audit-level=critical
@@ -52,8 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history so the scan covers every past commit, not just
-          # the current tree. A secret removed in a later commit remains
+          # Full history: a secret removed in a later commit remains
           # exposed in the history.
           fetch-depth: 0
 
@@ -73,4 +67,33 @@ jobs:
 
       # Rulesets detect injection, weak cryptographic configuration,
       # hardcoded credentials and insecure cookie attributes at source
-      # level.
+      # level. Findings are surfaced for manual triage rather than used
+      # as a delivery gate, since SAST output requires human assessment
+      # for exploitability.
+      - name: Run Semgrep security rulesets
+        continue-on-error: true
+        run: |
+          semgrep scan \
+            --config=p/javascript \
+            --config=p/security-audit \
+            --config=p/secrets \
+            --metrics=off
+
+  container-scan:
+    name: Container image vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -t stepfit-api:ci ./server
+
+      # Critical CVEs block the build. Advisories with no available
+      # upstream fix are excluded, since no remediation can be applied.
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: stepfit-api:ci
+          severity: CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
